@@ -1,0 +1,121 @@
+name: Build ImmortalWrt
+
+on:
+  push:
+    tags:
+      - "v**"
+  workflow_dispatch:
+    inputs:
+      build_config:
+        description: Firmware config to build
+        required: true
+        type: choice
+        default: full
+        options:
+          - minimal
+          - full
+          - both
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'push' && '[{"config_name":"full","config_file":"full"}]' || inputs.build_config == 'both' && '[{"config_name":"minimal","config_file":"minimal"},{"config_name":"full","config_file":"full"}]' || inputs.build_config == 'minimal' && '[{"config_name":"minimal","config_file":"minimal"}]' || '[{"config_name":"full","config_file":"full"}]') }}
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "true"
+      CCACHE_MAXSIZE: "3000M"
+      CCACHE_BASEDIR: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: ${{ runner.os }}-immortalwrt-25.12-dl-${{ matrix.config_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-25.12-dl-${{ matrix.config_name }}-
+            ${{ runner.os }}-immortalwrt-25.12-dl-
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-immortalwrt-25.12-ccache-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-25.12-ccache-${{ matrix.config_name }}-
+            ${{ runner.os }}-immortalwrt-25.12-ccache-
+
+      - name: Initialize build environment
+        run: |
+          sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          mkdir -p "$CCACHE_DIR" dl
+          ccache -M "$CCACHE_MAXSIZE"
+
+      - name: Install feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Load config
+        run: |
+          cp "defconfig/${{ matrix.config_file }}.config" .config
+          grep -q '^CONFIG_CCACHE=y$' .config || echo 'CONFIG_CCACHE=y' >> .config
+          make defconfig
+          grep -E '^(CONFIG_TARGET_|CONFIG_PACKAGE_kmod-mediatek_hnat=|CONFIG_PACKAGE_luci-app-turboacc-mtk=|CONFIG_PACKAGE_zram-swap=)' .config || true
+
+      - name: Download sources
+        run: |
+          make download -j"$(nproc)"
+          find dl -type f -size -1024c -delete
+
+      - name: Compile firmware
+        run: |
+          if ! make -j"$(nproc)"; then
+            make -j1 V=s
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.config_name }}
+          path: bin/targets/mediatek/filogic/*.bin
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-firmwares
+
+      - name: Prepare release files
+        run: |
+          mkdir -p final-release
+          find all-firmwares -type f -name '*.bin' -exec cp {} final-release/ \;
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          make_latest: true
+          files: final-release/*.bin
