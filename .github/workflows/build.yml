@@ -37,12 +37,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
 
       - name: Restore downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6.1.0
         with:
           path: dl
           key: ${{ runner.os }}-immortalwrt-25.12-dl-${{ matrix.config_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}
@@ -51,21 +51,48 @@ jobs:
             ${{ runner.os }}-immortalwrt-25.12-dl-
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        id: ccache-restore
+        uses: actions/cache/restore@v6.1.0
         with:
           path: .ccache
-          key: ${{ runner.os }}-immortalwrt-25.12-ccache-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}
+          key: ${{ runner.os }}-immortalwrt-25.12-ccache-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-immortalwrt-25.12-ccache-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}-
             ${{ runner.os }}-immortalwrt-25.12-ccache-${{ matrix.config_name }}-
             ${{ runner.os }}-immortalwrt-25.12-ccache-
+
+      - name: Restore host/toolchain cache
+        id: host-toolchain-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/hostpkg
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/hostpkg
+            build_dir/toolchain-*
+          key: ${{ runner.os }}-immortalwrt-25.12-host-toolchain-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-25.12-host-toolchain-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-
+            ${{ runner.os }}-immortalwrt-25.12-host-toolchain-${{ matrix.config_name }}-
+            ${{ runner.os }}-immortalwrt-25.12-host-toolchain-
 
       - name: Initialize build environment
         run: |
           sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-          sudo apt-get update
-          sudo apt-get install -y ccache
+
+      - name: Prepare ccache
+        run: |
+          set -euo pipefail
+          if ! command -v ccache >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ccache
+          fi
           mkdir -p "$CCACHE_DIR" dl
           ccache -M "$CCACHE_MAXSIZE"
+          ccache --zero-stats || true
+          ccache --show-config | sed -n '1,20p'
 
       - name: Install feeds
         run: |
@@ -86,12 +113,36 @@ jobs:
 
       - name: Compile firmware
         run: |
+          set -euo pipefail
+          ccache --show-stats || true
           if ! make -j"$(nproc)"; then
+            echo "::warning::Parallel build failed, retrying with -j1 V=s"
             make -j1 V=s
           fi
+          ccache --show-stats || true
+
+      - name: Save ccache
+        if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+
+      - name: Save host/toolchain cache
+        if: success() && steps.host-toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/hostpkg
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/hostpkg
+            build_dir/toolchain-*
+          key: ${{ steps.host-toolchain-cache.outputs.cache-primary-key }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: firmware-${{ matrix.config_name }}
           path: bin/targets/mediatek/filogic/*.bin
@@ -104,7 +155,7 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.1
         with:
           path: all-firmwares
 
@@ -114,8 +165,9 @@ jobs:
           find all-firmwares -type f -name '*.bin' -exec cp {} final-release/ \;
 
       - name: Create draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.1
         with:
           draft: true
           make_latest: true
+          tag_name: ${{ github.ref_name }}
           files: final-release/*.bin
