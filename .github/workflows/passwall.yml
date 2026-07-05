@@ -1,20 +1,10 @@
-name: Build ImmortalWrt
+name: Build Passwall ImmortalWrt
 
 on:
   push:
     tags:
       - v**
   workflow_dispatch:
-    inputs:
-      build_config:
-        description: Firmware config to build
-        required: true
-        type: choice
-        default: full
-        options:
-          - full
-          - mini
-          - both
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,10 +13,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(github.event_name == 'push' && '[{"config_name":"full","config_file":"full"}]' || inputs.build_config == 'mini' && '[{"config_name":"mini","config_file":"minimal"}]' || inputs.build_config == 'both' && '[{"config_name":"mini","config_file":"minimal"},{"config_name":"full","config_file":"full"}]' || '[{"config_name":"full","config_file":"full"}]') }}
 
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -34,6 +20,7 @@ jobs:
       CCACHE_COMPRESS: "true"
       CCACHE_MAXSIZE: "3000M"
       CCACHE_BASEDIR: ${{ github.workspace }}
+      CONFIG_FILE: defconfig/full.config
 
     steps:
       - name: Checkout My Repository Source
@@ -45,9 +32,9 @@ jobs:
         uses: actions/cache@v6.1.0
         with:
           path: dl
-          key: ${{ runner.os }}-immortalwrt-dl-${{ matrix.config_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}
+          key: ${{ runner.os }}-immortalwrt-dl-passwall-${{ hashFiles('defconfig/full.config') }}
           restore-keys: |
-            ${{ runner.os }}-immortalwrt-dl-${{ matrix.config_name }}-
+            ${{ runner.os }}-immortalwrt-dl-passwall-
             ${{ runner.os }}-immortalwrt-dl-
 
       - name: Restore Compiler Cache
@@ -55,10 +42,10 @@ jobs:
         uses: actions/cache/restore@v6.1.0
         with:
           path: .ccache
-          key: ${{ runner.os }}-immortalwrt-ccache-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}-${{ github.sha }}
+          key: ${{ runner.os }}-immortalwrt-ccache-passwall-${{ github.ref_name }}-${{ hashFiles('defconfig/full.config') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-immortalwrt-ccache-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles(format('defconfig/{0}.config', matrix.config_file)) }}-
-            ${{ runner.os }}-immortalwrt-ccache-${{ matrix.config_name }}-
+            ${{ runner.os }}-immortalwrt-ccache-passwall-${{ github.ref_name }}-${{ hashFiles('defconfig/full.config') }}-
+            ${{ runner.os }}-immortalwrt-ccache-passwall-
             ${{ runner.os }}-immortalwrt-ccache-
 
       - name: Restore Host/Toolchain Cache
@@ -72,10 +59,10 @@ jobs:
             build_dir/host
             build_dir/hostpkg
             build_dir/toolchain-*
-          key: ${{ runner.os }}-immortalwrt-host-toolchain-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-${{ github.sha }}
+          key: ${{ runner.os }}-immortalwrt-host-toolchain-passwall-${{ github.ref_name }}-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-immortalwrt-host-toolchain-${{ matrix.config_name }}-${{ github.ref_name }}-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-
-            ${{ runner.os }}-immortalwrt-host-toolchain-${{ matrix.config_name }}-
+            ${{ runner.os }}-immortalwrt-host-toolchain-passwall-${{ github.ref_name }}-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-
+            ${{ runner.os }}-immortalwrt-host-toolchain-passwall-
             ${{ runner.os }}-immortalwrt-host-toolchain-
 
       - name: Initialize Build Environment
@@ -102,10 +89,8 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Load Configuration (${{ matrix.config_name }})
+      - name: Load Configuration
         run: |
-          CONFIG_FILE="defconfig/${{ matrix.config_file }}.config"
-
           set_config() {
             local key="$1"
             local value="$2"
@@ -128,11 +113,20 @@ jobs:
           echo "✅ Successfully loaded $CONFIG_FILE"
 
           set_config "CONFIG_CCACHE" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geoview" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin" "y"
+          set_config "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray" "y"
 
           make defconfig
 
           echo "📄 Key config:"
-          grep -E '^(CONFIG_TARGET_|CONFIG_CCACHE=|CONFIG_PACKAGE_luci-app-ttyd=|CONFIG_PACKAGE_ttyd=)' .config || true
+          grep -E '^(CONFIG_TARGET_|CONFIG_CCACHE=|CONFIG_PACKAGE_luci-app-passwall=|CONFIG_PACKAGE_luci-app-ttyd=|CONFIG_PACKAGE_ttyd=)' .config || true
 
       - name: Download Sources
         run: |
@@ -175,7 +169,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: firmware-${{ matrix.config_name }}
+          name: firmware-passwall
           path: bin/targets/mediatek/filogic/*.bin
 
   publish:
@@ -185,27 +179,25 @@ jobs:
       contents: write
     if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
     steps:
-      - name: Download All Artifacts
+      - name: Download Artifact
         uses: actions/download-artifact@v8.0.1
         with:
           path: all-firmwares
 
-      - name: Prepare Release Files
+      - name: Flatten and Rename Files
         run: |
-          set -euo pipefail
-
           mkdir -p final-release
-          find all-firmwares -type f -name '*.bin' -print -exec cp {} final-release/ \;
+          for config_dir in all-firmwares/*/; do
+            config_name=$(basename "$config_dir")
+            for bin_file in "$config_dir"*.bin; do
+              if [ -f "$bin_file" ]; then
+                base=$(basename "$bin_file")
+                cp "$bin_file" "final-release/${base%.bin}-${config_name}.bin"
+              fi
+            done
+          done
 
-          if ! find final-release -type f -name '*.bin' -print -quit | grep -q .; then
-            echo "No firmware .bin files found in downloaded artifacts" >&2
-            find all-firmwares -maxdepth 3 -type f -print >&2
-            exit 1
-          fi
-
-          ls -lh final-release
-
-      - name: Create Unified Release
+      - name: Upload Passwall Release Assets
         uses: softprops/action-gh-release@v3.0.1
         with:
           make_latest: true
@@ -213,21 +205,3 @@ jobs:
           files: final-release/*.bin
           fail_on_unmatched_files: true
           draft: false
-          body: |
-            ## 📦 发布说明
-
-            ### ✨ 构建配置
-            - tag 默认发布 **full** 固件。
-            - **mini** 仅通过手动 workflow_dispatch 构建。
-            - **passwall**: 单独 workflow 构建，基于 full 额外包含 Passwall，并追加到同一发布。
-            - **full**: 完整构建，包含以下额外预装插件：
-              - `luci-proto-wireguard`: WireGuard 协议支持
-              - `luci-app-wol`: 网络唤醒 (WoL) 功能
-              - `luci-i18n-wol-zh-cn`: WoL 中文语言包
-              - `ddns-scripts-cloudflare`: Cloudflare DDNS 脚本
-              - `luci-app-ddns`: 动态 DNS 配置界面
-              - `luci-i18n-ddns-zh-cn`: DDNS 中文语言包
-              - `bind-host`: BIND DNS 服务器宿主支持
-              - `luci-app-store`: iStore 软件中心
-              - `kmod-tun` / `kmod-iptunnel` / `kmod-wireguard`: VPN 隧道基础模块
-              - `luci-app-ttyd` / `ttyd`: 网页终端

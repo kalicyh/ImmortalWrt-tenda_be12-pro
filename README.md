@@ -37,7 +37,7 @@
 保留的差异是故意的：
 
 - BE12 Pro DTS 不回退到纯旧仓库版本；当前以旧仓库 boot-good DTS 为底盘，保留 OpenWrt 修正：`label-mac-device = &gmac0`、gmac/WiFi MAC offset、PCIe 子节点 address/size cells、`wifi@0,0`。
-- workflow 保持只构建 `mini` 和 `full`，不恢复旧项目的 passwall workflow。
+- 主 workflow 保持只构建 `mini` 和 `full`；passwall 通过独立 workflow 构建。
 - Hiveton H5000M 不是这个仓库的维护目标，旧项目里 Hiveton DTS/image package 差异不迁移。
 - `02_network` 的 BE12 Pro 内容等价，只保留本仓库的 tab 缩进。
 
