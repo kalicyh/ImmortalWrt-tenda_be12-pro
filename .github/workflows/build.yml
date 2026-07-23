@@ -1,0 +1,209 @@
+name: Build Tenda BE12 Pro
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "true"
+      CCACHE_MAXSIZE: "3000M"
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      FIRMWARE_CONFIG: defconfig/low-mem-512m/mt7987-mt7992-be7200.config
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Restore Download Cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: dl
+          key: ${{ runner.os }}-immortalwrt-dl-tenda-be12-pro-${{ hashFiles('defconfig/low-mem-512m/mt7987-mt7992-be7200.config') }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-dl-tenda-be12-pro-
+            ${{ runner.os }}-immortalwrt-dl-
+
+      - name: Restore Compiler Cache
+        id: ccache-restore
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: .ccache
+          key: ${{ runner.os }}-immortalwrt-ccache-tenda-be12-pro-${{ hashFiles('defconfig/low-mem-512m/mt7987-mt7992-be7200.config') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-ccache-tenda-be12-pro-${{ hashFiles('defconfig/low-mem-512m/mt7987-mt7992-be7200.config') }}-
+            ${{ runner.os }}-immortalwrt-ccache-tenda-be12-pro-
+            ${{ runner.os }}-immortalwrt-ccache-
+
+      - name: Restore Host/Toolchain Cache
+        id: host-toolchain-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/hostpkg
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/hostpkg
+            build_dir/toolchain-*
+          key: ${{ runner.os }}-immortalwrt-host-toolchain-tenda-be12-pro-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-immortalwrt-host-toolchain-tenda-be12-pro-${{ hashFiles('tools/**', 'toolchain/**', 'include/**') }}-
+            ${{ runner.os }}-immortalwrt-host-toolchain-tenda-be12-pro-
+            ${{ runner.os }}-immortalwrt-host-toolchain-
+
+      - name: Initialize Build Environment
+        run: |
+          sudo bash -c 'bash <(curl -fsSL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          sudo timedatectl set-timezone "Asia/Shanghai"
+
+      - name: Prepare Compiler Cache
+        run: |
+          set -euo pipefail
+
+          if ! command -v ccache >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ccache
+          fi
+
+          mkdir -p "${CCACHE_DIR}" dl
+          ccache -M "${CCACHE_MAXSIZE}"
+          ccache --zero-stats || true
+          ccache --show-config | sed -n '1,20p'
+
+      - name: Update and Install Feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Load Tenda BE12 Pro Configuration
+        run: |
+          set -euo pipefail
+
+          set_config() {
+            local key="$1"
+            local value="$2"
+
+            if grep -q "^# ${key} is not set$" .config; then
+              sed -i "s|^# ${key} is not set$|${key}=${value}|" .config
+            elif grep -q "^${key}=" .config; then
+              sed -i "s|^${key}=.*$|${key}=${value}|" .config
+            else
+              echo "${key}=${value}" >> .config
+            fi
+          }
+
+          test -f "${FIRMWARE_CONFIG}"
+          cp -f "${FIRMWARE_CONFIG}" .config
+          sed -i \
+            's/^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_routerich_be7200=y$/# CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_routerich_be7200 is not set/' \
+            .config
+          set_config "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_tenda_be12-pro" "y"
+          set_config "CONFIG_CCACHE" "y"
+          make defconfig
+
+          grep -qx 'CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_tenda_be12-pro=y' .config
+          grep -E '^(CONFIG_TARGET_|CONFIG_CCACHE=|CONFIG_PACKAGE_kmod-mt7992=|CONFIG_MTK_WIFI7_CHIP_MT7992=)' .config
+
+      - name: Download Sources
+        run: |
+          make download -j"$(nproc)"
+          find dl -type f -size -1024c -delete
+
+      - name: Compile Firmware
+        run: |
+          set -euo pipefail
+
+          ccache --show-stats || true
+
+          if ! make -j"$(nproc)"; then
+            echo "::warning::Parallel build failed, retrying with -j1 V=s"
+            make -j1 V=s
+          fi
+
+          ccache --show-stats || true
+
+      - name: Save Compiler Cache
+        if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: .ccache
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+
+      - name: Save Host/Toolchain Cache
+        if: success() && steps.host-toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            staging_dir/host
+            staging_dir/hostpkg
+            staging_dir/toolchain-*
+            build_dir/host
+            build_dir/hostpkg
+            build_dir/toolchain-*
+          key: ${{ steps.host-toolchain-cache.outputs.cache-primary-key }}
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: firmware-tenda-be12-pro
+          path: bin/targets/mediatek/filogic/*tenda_be12-pro*.bin
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+
+    steps:
+      - name: Download Firmware
+        uses: actions/download-artifact@v8.0.1
+        with:
+          path: all-firmwares
+
+      - name: Prepare Release Files
+        run: |
+          set -euo pipefail
+
+          mkdir -p final-release
+          find all-firmwares -type f -name '*tenda_be12-pro*.bin' -print -exec cp {} final-release/ \;
+
+          if ! find final-release -type f -name '*.bin' -print -quit | grep -q .; then
+            echo "No Tenda BE12 Pro firmware files found" >&2
+            find all-firmwares -maxdepth 3 -type f -print >&2
+            exit 1
+          fi
+
+          ls -lh final-release
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3.0.1
+        with:
+          make_latest: true
+          tag_name: ${{ github.ref_name }}
+          files: final-release/*.bin
+          fail_on_unmatched_files: true
+          draft: false
+          body: |
+            ## Tenda BE12 Pro ImmortalWrt
+
+            - Source base: `chasey-dev/immortalwrt-mt798x-rebase:25.12-dev-wifi7`
+            - Device: Tenda BE12 Pro
+            - Wireless: MediaTek MT7992 with the MTK Wi-Fi 7 driver
+            - Build config: `defconfig/low-mem-512m/mt7987-mt7992-be7200.config`
+            - Commit: `${{ github.sha }}`
