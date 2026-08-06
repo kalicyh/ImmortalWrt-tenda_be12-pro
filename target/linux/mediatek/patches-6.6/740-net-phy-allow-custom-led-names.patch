@@ -17,7 +17,7 @@ Signed-off-by: sKy <29267720+sKyissKy@users.noreply.github.com>
 
 --- a/drivers/net/phy/phy_device.c
 +++ b/drivers/net/phy/phy_device.c
-@@ -3301,7 +3301,7 @@ static int of_phy_led(struct phy_device *phydev,
+@@ -3269,7 +3269,7 @@ static int of_phy_led(struct phy_device
  	cdev->max_brightness = 1;
  	init_data.devicename = dev_name(&phydev->mdio.dev);
  	init_data.fwnode = of_fwnode_handle(led);

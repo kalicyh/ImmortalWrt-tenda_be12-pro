@@ -19,10 +19,10 @@ The RBUS Wi-Fi utility copies a constant pinctrl state name into a local
 buffer.  Use strscpy() with the destination buffer size so the compiler
 does not warn about using the source string size as the strncpy() bound.
 
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_dbg.c b/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
 --- a/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
 @@ -69,7 +69,7 @@ static int qdma_pppq_show(struct seq_fil
+ 	int i;
  
  	seq_puts(m, "Usage of the QDMA PPPQ for the HW path:\n");
 -	for (i = 0; i < 64; i++)
@@ -30,8 +30,6 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_eth_dbg.c b/drivers/net/ethernet/
  		seq_printf(m, "qdma_txq%d:	%5d Mbps %8d refcnt\n",
  			   i, eth->qdma_shaper.speed[i],
  			   atomic_read(&eth->qdma_shaper.refcnt[i]));
-	seq_printf(m, "qdma_thres:	%5d Mbps\n", eth->qdma_shaper.threshold);
-diff --git a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
 --- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
 +++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c
 @@ -25,6 +25,7 @@
@@ -68,7 +66,7 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c b/drivers/net
  	/* We must ensure all info has been updated before set to hw */
  	wmb();
  	/* After other fields have been written, write info1 to BIND the entry */
-@@ -2490,8 +2499,7 @@ mtk_sw_nat_hook_tx(struct sk_buff *skb,
+@@ -2490,8 +2499,7 @@ int mtk_sw_nat_hook_tx(struct sk_buff *s
  	/* Before entry enter BIND state, write other fields first,
           * prevent racing with hardware accesses.
           */
@@ -78,7 +76,6 @@ diff --git a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c b/drivers/net
          /* We must ensure all info has been updated before set to hw */
          wmb();
          /* After other fields have been writtefn, write info1 to BIND the entry */
-diff --git a/drivers/net/wireless/wifi_utility/pci_mediatek_rbus.c b/drivers/net/wireless/wifi_utility/pci_mediatek_rbus.c
 --- a/drivers/net/wireless/wifi_utility/pci_mediatek_rbus.c
 +++ b/drivers/net/wireless/wifi_utility/pci_mediatek_rbus.c
 @@ -150,7 +150,7 @@ rbus_pa_lan_config(struct platform_devic
